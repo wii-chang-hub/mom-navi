@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>媽媽的導航小幫手</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --accent: #ff7a1a;
+    --accent-dark: #e0680f;
+    --bg: #fdfaf5;
+    --card: #ffffff;
+    --text: #2b2620;
+    --text-soft: #6b6459;
+    --border: #ece5d8;
+    --good: #2e8b57;
+    --danger: #d1453b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app {
+    max-width: 640px;
+    margin: 0 auto;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+  header {
+    padding: 18px 16px 14px;
+    background: var(--accent);
+    color: white;
+    text-align: center;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  header p {
+    margin: 4px 0 0;
+    font-size: 14px;
+    opacity: 0.92;
+  }
+  .panel {
+    background: var(--card);
+    margin: 12px;
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+  label.field-label {
+    display: block;
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+  input[type="text"] {
+    flex: 1;
+    font-size: 18px;
+    padding: 14px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    background: #fffdf9;
+    color: var(--text);
+    min-width: 0;
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .locate-btn {
+    flex-shrink: 0;
+    font-size: 20px;
+    width: 52px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    background: #fffdf9;
+    cursor: pointer;
+  }
+  .suggestions {
+    margin-top: 6px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .suggestions.show { display: block; }
+  .suggestion-item {
+    padding: 12px 14px;
+    font-size: 15px;
+    background: white;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .suggestion-item:last-child { border-bottom: none; }
+  .suggestion-item:active { background: #fff2e5; }
+
+  .checkbox-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    background: #fffdf9;
+    cursor: pointer;
+    user-select: none;
+  }
+  .checkbox-item.checked {
+    border-color: var(--accent);
+    background: #fff2e5;
+  }
+  .checkbox-item input {
+    width: 24px;
+    height: 24px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
+  .checkbox-item .cb-text {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .checkbox-item .cb-sub {
+    font-size: 13px;
+    color: var(--text-soft);
+    font-weight: 400;
+    margin-top: 2px;
+  }
+
+  .go-btn {
+    width: 100%;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 16px;
+    border-radius: 14px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+  .go-btn:active { background: var(--accent-dark); }
+  .go-btn:disabled { background: #d8cfc0; cursor: default; }
+
+  #map {
+    width: 100%;
+    height: 320px;
+    border-radius: 16px;
+    margin: 0 12px;
+    display: none;
+  }
+  #map.show { display: block; }
+
+  .status {
+    text-align: center;
+    padding: 10px;
+    font-size: 15px;
+    color: var(--text-soft);
+    display: none;
+  }
+  .status.show { display: block; }
+
+  .result-panel { display: none; }
+  .result-panel.show { display: block; }
+
+  .result-summary {
+    display: flex;
+    justify-content: space-around;
+    text-align: center;
+    padding: 10px 0 14px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .result-summary .stat b {
+    display: block;
+    font-size: 22px;
+    color: var(--accent-dark);
+  }
+  .result-summary .stat span {
+    font-size: 13px;
+    color: var(--text-soft);
+  }
+  .side-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 4px;
+  }
+  .side-right { background: #e3f5ea; color: var(--good); }
+  .side-left { background: #fdeceb; color: var(--danger); }
+  .side-unknown { background: #f0eee9; color: var(--text-soft); }
+
+  .steps-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .steps-list li {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .steps-list li:last-child { border-bottom: none; }
+  .step-num {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .step-text b { color: var(--text); }
+  .step-dist { color: var(--text-soft); font-size: 13px; }
+
+  .parking-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .parking-list li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .parking-list li:last-child { border-bottom: none; }
+  .parking-dist {
+    color: var(--accent-dark);
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+  .empty-note {
+    color: var(--text-soft);
+    font-size: 14px;
+    text-align: center;
+    padding: 8px 0;
+  }
+
+  h2.section-title {
+    font-size: 17px;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .reset-btn {
+    width: 100%;
+    font-size: 16px;
+    padding: 13px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  footer {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-soft);
+    padding: 20px 16px 30px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🧭 媽媽的導航小幫手</h1>
+    <p>輸入工作地點，幫你找好走的路</p>
+  </header>
+
+  <div class="panel">
+    <label class="field-label" for="startInput">從哪裡出發？</label>
+    <div class="input-row">
+      <input type="text" id="startInput" placeholder="輸入起點地址，或按右邊定位" autocomplete="off">
+      <button class="locate-btn" id="myLocBtn" title="使用目前位置作為起點">📍</button>
+    </div>
+    <div class="suggestions" id="startSuggestions"></div>
+  </div>
+
+  <div class="panel">
+    <label class="field-label" for="destInput">目的地在哪裡？</label>
+    <div class="input-row">
+      <input type="text" id="destInput" placeholder="輸入地址或地點名稱" autocomplete="off">
+    </div>
+    <div class="suggestions" id="suggestions"></div>
+  </div>
+
+  <div class="panel">
+    <label class="field-label">怎麼走比較好？（可複選，不選則走最短路線）</label>
+    <div class="checkbox-list">
+      <label class="checkbox-item" id="cb-mainroad">
+        <input type="checkbox" id="chkMainRoad">
+        <div>
+          <div class="cb-text">🛣️ 盡量走大條的路</div>
+          <div class="cb-sub">減少走小巷弄，比較不容易迷路</div>
+        </div>
+      </label>
+      <label class="checkbox-item" id="cb-fewturns">
+        <input type="checkbox" id="chkFewTurns">
+        <div>
+          <div class="cb-text">↪️ 盡量少轉彎</div>
+          <div class="cb-sub">路線盡量直，減少判斷路口的次數</div>
+        </div>
+      </label>
+      <label class="checkbox-item" id="cb-rightside">
+        <input type="checkbox" id="chkRightSide">
+        <div>
+          <div class="cb-text">➡️ 目的地在右邊</div>
+          <div class="cb-sub">方便靠右停車，不用調頭或跨越車道</div>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <button class="go-btn" id="goBtn" disabled>開始規劃路線</button>
+  </div>
+
+  <div class="status" id="statusMsg"></div>
+
+  <div id="map"></div>
+
+  <div class="panel result-panel" id="resultPanel">
+    <div class="result-summary">
+      <div class="stat">
+        <b id="statDist">–</b>
+        <span>總距離</span>
+      </div>
+      <div class="stat">
+        <b id="statTime">–</b>
+        <span>預估時間</span>
+      </div>
+      <div class="stat">
+        <b id="statTurns">–</b>
+        <span>轉彎次數</span>
+      </div>
+    </div>
+    <div style="text-align:center; margin-bottom: 14px;">
+      <span id="sideBadge" class="side-badge side-unknown">終點方向計算中</span>
+    </div>
+    <h2 class="section-title">🚗 路線指引</h2>
+    <ul class="steps-list" id="stepsList"></ul>
+  </div>
+
+  <div class="panel result-panel" id="parkingPanel">
+    <h2 class="section-title">🏍️ 附近機車停車位</h2>
+    <ul class="parking-list" id="parkingList"></ul>
+  </div>
+
+  <div class="panel result-panel" id="resetPanelWrap">
+    <button class="reset-btn" id="resetBtn">🔄 重新規劃</button>
+  </div>
+
+  <footer>資料來源：OpenStreetMap 貢獻者、OSRM</footer>
+</div>
+
+<script>
+(function () {
+  const NOMINATIM = "https://nominatim.openstreetmap.org";
+  const OSRM = "https://router.project-osrm.org";
+  const OVERPASS_MIRRORS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
+  ];
+
+  const startInput = document.getElementById('startInput');
+  const startSuggestionsBox = document.getElementById('startSuggestions');
+  const destInput = document.getElementById('destInput');
+  const suggestionsBox = document.getElementById('suggestions');
+  const myLocBtn = document.getElementById('myLocBtn');
+  const goBtn = document.getElementById('goBtn');
+  const statusMsg = document.getElementById('statusMsg');
+  const mapDiv = document.getElementById('map');
+  const resultPanel = document.getElementById('resultPanel');
+  const parkingPanel = document.getElementById('parkingPanel');
+  const resetPanelWrap = document.getElementById('resetPanelWrap');
+  const resetBtn = document.getElementById('resetBtn');
+
+  const chkMainRoad = document.getElementById('chkMainRoad');
+  const chkFewTurns = document.getElementById('chkFewTurns');
+  const chkRightSide = document.getElementById('chkRightSide');
+
+  let startCoord = null; // {lat, lon}
+  let destCoord = null;  // {lat, lon}
+  let map = null;
+  let routeLayer = null;
+  let markersLayer = null;
+
+  // ---- checkbox visual toggle ----
+  function wireCheckbox(itemId, inputEl) {
+    const item = document.getElementById(itemId);
+    function sync() {
+      item.classList.toggle('checked', inputEl.checked);
+    }
+    item.addEventListener('click', (e) => {
+      if (e.target !== inputEl) {
+        inputEl.checked = !inputEl.checked;
+      }
+      sync();
+    });
+    sync();
+  }
+  wireCheckbox('cb-mainroad', chkMainRoad);
+  wireCheckbox('cb-fewturns', chkFewTurns);
+  wireCheckbox('cb-rightside', chkRightSide);
+
+  function showStatus(text) {
+    statusMsg.textContent = text;
+    statusMsg.classList.add('show');
+  }
+  function hideStatus() {
+    statusMsg.classList.remove('show');
+  }
+
+  function updateGoBtn() {
+    goBtn.disabled = !(startCoord && destCoord);
+  }
+
+  // ---- geolocation for start point ----
+  myLocBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      alert('這個瀏覽器不支援定位功能，請直接輸入起點地址。');
+      return;
+    }
+    myLocBtn.textContent = '⏳';
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        startCoord = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        startInput.value = '目前位置';
+        myLocBtn.textContent = '✅';
+        updateGoBtn();
+      },
+      (err) => {
+        myLocBtn.textContent = '📍';
+        alert('無法取得目前位置（可能是瀏覽器未授權定位，或桌機沒有定位裝置）。請直接在上面輸入起點地址即可。');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+
+  // ---- address autocomplete via Nominatim (generic, reusable for both inputs) ----
+  function wireAddressAutocomplete(inputEl, boxEl, onPick) {
+    let timer = null;
+    inputEl.addEventListener('input', () => {
+      onPick(null); // clear previously picked coord while user is typing
+      const q = inputEl.value.trim();
+      clearTimeout(timer);
+      if (q.length < 2) {
+        boxEl.classList.remove('show');
+        boxEl.innerHTML = '';
+        return;
+      }
+      timer = setTimeout(() => doSearch(q, boxEl, (item) => {
+        inputEl.value = item.display_name;
+        boxEl.classList.remove('show');
+        onPick({ lat: parseFloat(item.lat), lon: parseFloat(item.lon) });
+      }), 450);
+    });
+    document.addEventListener('click', (e) => {
+      if (!boxEl.contains(e.target) && e.target !== inputEl) {
+        boxEl.classList.remove('show');
+      }
+    });
+  }
+
+  async function doSearch(q, boxEl, onSelect) {
+    try {
+      const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=tw&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { headers: { 'Accept-Language': 'zh-TW' } });
+      const data = await res.json();
+      renderSuggestions(data, boxEl, onSelect);
+    } catch (e) {
+      boxEl.classList.remove('show');
+    }
+  }
+
+  function renderSuggestions(items, boxEl, onSelect) {
+    boxEl.innerHTML = '';
+    if (!items || items.length === 0) {
+      boxEl.classList.remove('show');
+      return;
+    }
+    items.forEach((item) => {
+      const div = document.createElement('div');
+      div.className = 'suggestion-item';
+      div.textContent = item.display_name;
+      div.addEventListener('click', () => onSelect(item));
+      boxEl.appendChild(div);
+    });
+    boxEl.classList.add('show');
+  }
+
+  wireAddressAutocomplete(startInput, startSuggestionsBox, (coord) => {
+    startCoord = coord;
+    if (coord === null && myLocBtn.textContent === '✅') myLocBtn.textContent = '📍';
+    updateGoBtn();
+  });
+  wireAddressAutocomplete(destInput, suggestionsBox, (coord) => {
+    destCoord = coord;
+    updateGoBtn();
+  });
+
+  // ---- routing ----
+  goBtn.addEventListener('click', async () => {
+    if (!startCoord || !destCoord) return;
+    resultPanel.classList.remove('show');
+    parkingPanel.classList.remove('show');
+    resetPanelWrap.classList.remove('show');
+    showStatus('正在規劃路線，請稍候…');
+    goBtn.disabled = true;
+
+    try {
+      const route = await findBestRoute(startCoord, destCoord);
+      renderRoute(route);
+      hideStatus();
+      resultPanel.classList.add('show');
+      resetPanelWrap.classList.add('show');
+    } catch (e) {
+      console.error(e);
+      showStatus('路線規劃失敗：' + (e.message || '請確認網路連線後再試一次'));
+      goBtn.disabled = false;
+      return;
+    }
+
+    // Parking lookup is a separate, non-critical step: if it fails, the
+    // route result above should still stand and just show a soft note.
+    try {
+      const spots = await findMotorcycleParking(destCoord);
+      renderParking(spots);
+      parkingPanel.classList.add('show');
+    } catch (e) {
+      console.error(e);
+      renderParking(null, true, e.message);
+      parkingPanel.classList.add('show');
+    }
+    goBtn.disabled = false;
+  });
+
+  resetBtn.addEventListener('click', () => {
+    resultPanel.classList.remove('show');
+    parkingPanel.classList.remove('show');
+    resetPanelWrap.classList.remove('show');
+    mapDiv.classList.remove('show');
+    hideStatus();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // ---- OSRM route fetching with alternatives ----
+  async function fetchRoutes(start, dest) {
+    const url = `${OSRM}/route/v1/driving/${start.lon},${start.lat};${dest.lon},${dest.lat}` +
+      `?alternatives=true&steps=true&geometries=geojson&overview=full&annotations=true`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('路線服務暫時無法使用');
+    const data = await res.json();
+    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+      throw new Error('找不到路線，請確認地址是否正確');
+    }
+    return data.routes;
+  }
+
+  // Try to fetch a route that approaches the destination from the opposite
+  // side of the road, by routing through a waypoint offset perpendicular to
+  // the direct start->dest bearing, placed just before the destination.
+  async function fetchOpposingSideRoute(start, dest) {
+    const dirBearing = bearing(start.lat, start.lon, dest.lat, dest.lon);
+    // perpendicular offsets to try (right-hand and left-hand of travel direction)
+    const perpBearings = [(dirBearing + 90) % 360, (dirBearing - 90 + 360) % 360];
+    const offsetMeters = 35; // small lateral offset near destination, roughly one road width+
+    const results = [];
+    for (const pb of perpBearings) {
+      const waypoint = destPointFromBearing(dest.lat, dest.lon, pb, offsetMeters);
+      // route: start -> waypoint (near dest, offset to one side) -> dest
+      const url = `${OSRM}/route/v1/driving/${start.lon},${start.lat};${waypoint.lon},${waypoint.lat};${dest.lon},${dest.lat}` +
+        `?steps=true&geometries=geojson&overview=full&annotations=true`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+          results.push(data.routes[0]);
+        }
+      } catch (e) { /* ignore failed attempt */ }
+    }
+    return results;
+  }
+
+  // project a lat/lon point a given distance (meters) along a bearing (degrees)
+  function destPointFromBearing(lat, lon, bearingDeg, distMeters) {
+    const R = 6371000;
+    const toRad = (d) => d * Math.PI / 180;
+    const toDeg = (r) => r * 180 / Math.PI;
+    const brng = toRad(bearingDeg);
+    const lat1 = toRad(lat);
+    const lon1 = toRad(lon);
+    const dOverR = distMeters / R;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dOverR) + Math.cos(lat1) * Math.sin(dOverR) * Math.cos(brng));
+    const lon2 = lon1 + Math.atan2(
+      Math.sin(brng) * Math.sin(dOverR) * Math.cos(lat1),
+      Math.cos(dOverR) - Math.sin(lat1) * Math.sin(lat2)
+    );
+    return { lat: toDeg(lat2), lon: toDeg(lon2) };
+  }
+
+  // classify a step's road as "major" using heuristics from OSRM step data
+  function isMajorRoad(step) {
+    const name = (step.name || '') + ' ' + (step.ref || '');
+    // Taiwan major road indicators: numbered highways/provincial roads, named boulevards
+    const majorPattern = /台\d|國道|快速道路|省道|東路|西路|南路|北路|大道|環路|環道|高架|交流道/;
+    const minorPattern = /巷|弄|衖/;
+    if (majorPattern.test(name)) return true;
+    if (minorPattern.test(name)) return false;
+    // fallback: use street "class" via intersections count / long straight segments as proxy
+    return step.distance > 300; // long uninterrupted segments tend to be arterial roads
+  }
+
+  function countTurns(route) {
+    let turns = 0;
+    route.legs.forEach((leg) => {
+      leg.steps.forEach((step) => {
+        const m = step.maneuver;
+        if (!m) return;
+        if (m.type === 'turn' && (m.modifier === 'left' || m.modifier === 'right' ||
+            m.modifier === 'sharp left' || m.modifier === 'sharp right')) {
+          turns++;
+        }
+      });
+    });
+    return turns;
+  }
+
+  function majorRoadRatio(route) {
+    let majorDist = 0;
+    let totalDist = 0;
+    route.legs.forEach((leg) => {
+      leg.steps.forEach((step) => {
+        totalDist += step.distance;
+        if (isMajorRoad(step)) majorDist += step.distance;
+      });
+    });
+    if (totalDist === 0) return 0;
+    return majorDist / totalDist;
+  }
+
+  // Determine whether destination ends up on the right side of travel direction
+  function destinationSide(route) {
+    const coords = route.geometry.coordinates; // [lon, lat]
+    if (coords.length < 3) return 'unknown';
+    const n = coords.length;
+    const [lon2, lat2] = coords[n - 1];
+    const [lon1, lat1] = coords[n - 2];
+    // bearing of final approach
+    const approachBearing = bearing(lat1, lon1, lat2, lon2);
+
+    // find last maneuver's modifier if it's arrive-type with side hint
+    const lastLeg = route.legs[route.legs.length - 1];
+    const arriveStep = lastLeg.steps[lastLeg.steps.length - 1];
+    if (arriveStep && arriveStep.maneuver && arriveStep.maneuver.type === 'arrive') {
+      const mod = arriveStep.maneuver.modifier;
+      if (mod === 'right') return 'right';
+      if (mod === 'left') return 'left';
+    }
+    return 'unknown';
+  }
+
+  function bearing(lat1, lon1, lat2, lon2) {
+    const toRad = (d) => d * Math.PI / 180;
+    const toDeg = (r) => r * 180 / Math.PI;
+    const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+      Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  async function findBestRoute(start, dest) {
+    const wantMain = chkMainRoad.checked;
+    const wantFewTurns = chkFewTurns.checked;
+    const wantRight = chkRightSide.checked;
+    const anySelected = wantMain || wantFewTurns || wantRight;
+
+    const baseRoutes = await fetchRoutes(start, dest);
+    let candidateRoutes = baseRoutes.map(r => ({ route: r, isDetour: false }));
+
+    // If "destination on the right" is requested and none of the direct
+    // candidates achieve it, try forcing an approach from the opposite side.
+    if (wantRight) {
+      const anyRightAlready = baseRoutes.some(r => destinationSide(r) === 'right');
+      if (!anyRightAlready) {
+        const detourRoutes = await fetchOpposingSideRoute(start, dest);
+        candidateRoutes = candidateRoutes.concat(detourRoutes.map(r => ({ route: r, isDetour: true })));
+      }
+    }
+
+    // precompute metrics
+    const scored = candidateRoutes.map(({ route, isDetour }) => {
+      const turns = countTurns(route);
+      const mainRatio = majorRoadRatio(route);
+      const side = destinationSide(route);
+      return { route, turns, mainRatio, side, isDetour };
+    });
+
+    if (!anySelected) {
+      // shortest distance wins (detours never considered here)
+      const direct = scored.filter(s => !s.isDetour);
+      direct.sort((a, b) => a.route.distance - b.route.distance);
+      return direct[0];
+    }
+
+    // normalize metrics across candidates for scoring
+    const maxTurns = Math.max(...scored.map(s => s.turns), 1);
+    const minTurns = Math.min(...scored.map(s => s.turns));
+    const shortestDist = Math.min(...scored.map(s => s.route.distance));
+
+    scored.forEach((s) => {
+      let score = 0;
+      let weightSum = 0;
+      if (wantMain) {
+        score += s.mainRatio * 100;
+        weightSum += 100;
+      }
+      if (wantFewTurns) {
+        const turnScore = maxTurns === minTurns ? 100 : (1 - (s.turns - minTurns) / (maxTurns - minTurns)) * 100;
+        score += turnScore;
+        weightSum += 100;
+      }
+      if (wantRight) {
+        const sideScore = s.side === 'right' ? 100 : (s.side === 'unknown' ? 40 : 0);
+        score += sideScore;
+        weightSum += 100;
+      }
+      // detour candidates only "count" if they meaningfully help without
+      // an excessive distance penalty (avoid absurd multi-km detours for a 30m offset)
+      const detourPenalty = s.isDetour ? Math.max(0, (s.route.distance - shortestDist) / shortestDist) * 40 : 0;
+      const baseScore = weightSum > 0 ? (score / weightSum) : 0;
+      s.finalScore = baseScore - detourPenalty;
+    });
+
+    scored.sort((a, b) => b.finalScore - a.finalScore);
+    return scored[0];
+  }
+
+  function stepInstruction(step) {
+    const name = step.name || '';
+    const m = step.maneuver || {};
+    const type = m.type;
+    const mod = m.modifier;
+    const modText = {
+      'left': '左轉', 'right': '右轉',
+      'sharp left': '大左轉', 'sharp right': '大右轉',
+      'slight left': '稍微左偏', 'slight right': '稍微右偏',
+      'straight': '直行', 'uturn': '迴轉'
+    };
+    if (type === 'depart') return `從起點出發${name ? '，沿 ' + name : ''}`;
+    if (type === 'arrive') {
+      const sideText = mod === 'right' ? '（目的地在右手邊）' : (mod === 'left' ? '（目的地在左手邊）' : '');
+      return `抵達目的地 ${sideText}`;
+    }
+    if (type === 'roundabout' || type === 'rotary') return `進入圓環${name ? '，往 ' + name : ''}`;
+    if (type === 'merge') return `匯入${name ? ' ' + name : '車流'}`;
+    if (type === 'fork') return `於岔路${mod ? modText[mod] || '' : ''}${name ? '，往 ' + name : ''}`;
+    if (type === 'end of road') return `路的盡頭${mod ? modText[mod] || '' : ''}${name ? '，往 ' + name : ''}`;
+    const action = modText[mod] || '繼續前進';
+    return `${action}${name ? '，沿 ' + name : ''}`;
+  }
+
+  function renderRoute(scored) {
+    const route = scored.route;
+    document.getElementById('statDist').textContent =
+      route.distance >= 1000 ? (route.distance / 1000).toFixed(1) + ' 公里' : Math.round(route.distance) + ' 公尺';
+    document.getElementById('statTime').textContent = Math.round(route.duration / 60) + ' 分鐘';
+    document.getElementById('statTurns').textContent = scored.turns + ' 次';
+
+    const badge = document.getElementById('sideBadge');
+    const wantedRight = chkRightSide.checked;
+    if (scored.side === 'right') {
+      badge.textContent = '✅ 終點在右手邊，方便停車';
+      badge.className = 'side-badge side-right';
+    } else if (scored.side === 'left') {
+      badge.textContent = wantedRight
+        ? '⚠️ 這段路只有這一條走法，終點在左手邊，停車請多留意對向來車'
+        : '⚠️ 終點在左手邊，停車請多留意對向來車';
+      badge.className = 'side-badge side-left';
+    } else {
+      badge.textContent = 'ℹ️ 終點方向不確定，抵達時請留意路牌';
+      badge.className = 'side-badge side-unknown';
+    }
+
+    const stepsList = document.getElementById('stepsList');
+    stepsList.innerHTML = '';
+    let idx = 1;
+    route.legs.forEach((leg) => {
+      leg.steps.forEach((step) => {
+        const li = document.createElement('li');
+        const numDiv = document.createElement('div');
+        numDiv.className = 'step-num';
+        numDiv.textContent = idx++;
+        const textDiv = document.createElement('div');
+        textDiv.className = 'step-text';
+        const distText = step.distance > 0 ?
+          `<div class="step-dist">${step.distance >= 1000 ? (step.distance/1000).toFixed(1)+' 公里' : Math.round(step.distance)+' 公尺'}</div>` : '';
+        textDiv.innerHTML = `<b>${stepInstruction(step)}</b>${distText}`;
+        li.appendChild(numDiv);
+        li.appendChild(textDiv);
+        stepsList.appendChild(li);
+      });
+    });
+
+    // map
+    mapDiv.classList.add('show');
+    if (!map) {
+      map = L.map('map');
+    }
+    if (routeLayer) map.removeLayer(routeLayer);
+    if (markersLayer) map.removeLayer(markersLayer);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap 貢獻者'
+    }).addTo(map);
+
+    const latlngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
+    routeLayer = L.polyline(latlngs, { color: '#ff7a1a', weight: 5 }).addTo(map);
+
+    markersLayer = L.layerGroup().addTo(map);
+    L.marker(latlngs[0]).addTo(markersLayer).bindPopup('起點');
+    L.marker(latlngs[latlngs.length - 1]).addTo(markersLayer).bindPopup('目的地');
+
+    map.fitBounds(routeLayer.getBounds(), { padding: [24, 24] });
+    setTimeout(() => map.invalidateSize(), 200);
+  }
+
+  // ---- motorcycle parking via Overpass ----
+  async function findMotorcycleParking(dest) {
+    const radius = 400; // meters
+    const query = `[out:json][timeout:20];
+      (
+        node["amenity"="motorcycle_parking"](around:${radius},${dest.lat},${dest.lon});
+        way["amenity"="motorcycle_parking"](around:${radius},${dest.lat},${dest.lon});
+      );
+      out center;`;
+
+    let lastError = null;
+    for (const endpoint of OVERPASS_MIRRORS) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        let res;
+        try {
+          res = await fetch(endpoint, {
+            method: 'POST',
+            body: 'data=' + encodeURIComponent(query),
+            signal: controller.signal
+          });
+        } catch (fetchErr) {
+          if (fetchErr.name === 'AbortError') {
+            lastError = new Error(`${endpoint} 逾時未回應（超過 25 秒）`);
+          } else {
+            // "Failed to fetch" lands here — usually a network/CORS/blocked-by-extension issue
+            lastError = new Error(`${endpoint} 連線失敗（可能被瀏覽器擴充功能或防火牆擋下）：${fetchErr.message}`);
+          }
+          continue;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        if (!res.ok) { lastError = new Error(`${endpoint} 回應錯誤（HTTP ${res.status}）`); continue; }
+        const data = await res.json();
+        const spots = (data.elements || []).map((el) => {
+          const lat = el.lat || (el.center && el.center.lat);
+          const lon = el.lon || (el.center && el.center.lon);
+          if (lat == null || lon == null) return null;
+          const dist = haversine(dest.lat, dest.lon, lat, lon);
+          const name = (el.tags && (el.tags.name || el.tags['name:zh'])) || '機車停車格';
+          const capacity = el.tags && el.tags.capacity;
+          return { lat, lon, dist, name, capacity };
+        }).filter(Boolean);
+        spots.sort((a, b) => a.dist - b.dist);
+        return spots.slice(0, 8); // success — no need to try other mirrors
+      } catch (e) {
+        lastError = e;
+        // try next mirror
+      }
+    }
+    // all mirrors failed
+    throw lastError || new Error('無法連線到停車位服務');
+  }
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function renderParking(spots, failed, errDetail) {
+    const list = document.getElementById('parkingList');
+    list.innerHTML = '';
+    if (failed) {
+      const li = document.createElement('li');
+      const detailHtml = errDetail
+        ? `<div style="font-size:11px; color:#a89e8c; margin-top:6px; word-break:break-all;">技術細節：${errDetail}</div>`
+        : '';
+      li.innerHTML = `<div class="empty-note">⚠️ 停車位查詢服務暫時連不上，路線本身沒有問題，可以先出發。稍後可重新規劃再看一次附近停車位${detailHtml}</div>`;
+      list.appendChild(li);
+      return;
+    }
+    if (!spots || spots.length === 0) {
+      const li = document.createElement('li');
+      li.innerHTML = '<div class="empty-note">附近 400 公尺內查無登記的機車停車格，建議抵達後留意路邊白線或收費停車場</div>';
+      list.appendChild(li);
+      return;
+    }
+    spots.forEach((spot) => {
+      const li = document.createElement('li');
+      const distText = spot.dist >= 1000 ? (spot.dist/1000).toFixed(1) + ' 公里' : Math.round(spot.dist) + ' 公尺';
+      const capText = spot.capacity ? `（約 ${spot.capacity} 格）` : '';
+      li.innerHTML = `<span>🏍️ ${spot.name}${capText}</span><span class="parking-dist">${distText}</span>`;
+
+      if (map) {
+        li.style.cursor = 'pointer';
+        li.addEventListener('click', () => {
+          L.marker([spot.lat, spot.lon], {
+            icon: L.divIcon({ className: '', html: '🏍️', iconSize: [24,24] })
+          }).addTo(markersLayer).bindPopup(spot.name).openPopup();
+          map.panTo([spot.lat, spot.lon]);
+        });
+      }
+      list.appendChild(li);
+    });
+
+    // also drop pins for all spots
+    if (map && markersLayer) {
+      spots.forEach((spot) => {
+        L.marker([spot.lat, spot.lon], {
+          icon: L.divIcon({ className: '', html: '🏍️', iconSize: [20,20] })
+        }).addTo(markersLayer).bindPopup(spot.name);
+      });
+    }
+  }
+})();
+</script>
+</body>
+</html>
