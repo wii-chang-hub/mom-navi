@@ -362,6 +362,7 @@
   <div id="map"></div>
 
   <div class="panel result-panel" id="resultPanel">
+    <div id="motorwayWarning" style="display:none; background:#fdeceb; color:var(--danger); border-radius:12px; padding:12px 14px; font-size:14px; font-weight:600; margin-bottom:14px; line-height:1.5;"></div>
     <div class="result-summary">
       <div class="stat">
         <b id="statDist">–</b>
@@ -379,7 +380,7 @@
     <div style="text-align:center; margin-bottom: 14px;">
       <span id="sideBadge" class="side-badge side-unknown">終點方向計算中</span>
     </div>
-    <h2 class="section-title">🚗 路線指引</h2>
+    <h2 class="section-title">🏍️ 路線指引</h2>
     <ul class="steps-list" id="stepsList"></ul>
   </div>
 
@@ -504,21 +505,47 @@
     });
   }
 
+  // Taiwanese addresses are often typed with the postal code glued directly
+  // onto the address (e.g. "300新竹市東區..."), which search engines don't
+  // parse well. Strip a leading 3-6 digit postal code (with or without a
+  // following space/dash) before searching.
+  function stripLeadingPostalCode(q) {
+    return q.replace(/^\s*\d{3,6}\s*[-,、]?\s*/, '').trim();
+  }
+
+  async function queryNominatim(q) {
+    const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=tw&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'zh-TW' } });
+    if (!res.ok) throw new Error('地址搜尋服務暫時無法使用');
+    return res.json();
+  }
+
   async function doSearch(q, boxEl, onSelect) {
     try {
-      const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=tw&q=${encodeURIComponent(q)}`;
-      const res = await fetch(url, { headers: { 'Accept-Language': 'zh-TW' } });
-      const data = await res.json();
-      renderSuggestions(data, boxEl, onSelect);
+      let data = await queryNominatim(q);
+      // if the raw query returns nothing, retry with a cleaned-up version
+      // (strip glued-on postal code) before giving up
+      if ((!data || data.length === 0)) {
+        const cleaned = stripLeadingPostalCode(q);
+        if (cleaned && cleaned !== q) {
+          data = await queryNominatim(cleaned);
+        }
+      }
+      renderSuggestions(data, boxEl, onSelect, q);
     } catch (e) {
-      boxEl.classList.remove('show');
+      renderSuggestionsError(boxEl);
     }
   }
 
-  function renderSuggestions(items, boxEl, onSelect) {
+  function renderSuggestions(items, boxEl, onSelect, originalQuery) {
     boxEl.innerHTML = '';
     if (!items || items.length === 0) {
-      boxEl.classList.remove('show');
+      const div = document.createElement('div');
+      div.className = 'suggestion-item';
+      div.style.color = '#a89e8c';
+      div.textContent = '找不到符合的地址，請確認地址是否打對，或試試看只打路名+門牌號';
+      boxEl.appendChild(div);
+      boxEl.classList.add('show');
       return;
     }
     items.forEach((item) => {
@@ -528,6 +555,16 @@
       div.addEventListener('click', () => onSelect(item));
       boxEl.appendChild(div);
     });
+    boxEl.classList.add('show');
+  }
+
+  function renderSuggestionsError(boxEl) {
+    boxEl.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'suggestion-item';
+    div.style.color = '#a89e8c';
+    div.textContent = '⚠️ 地址搜尋服務暫時連不上，請稍後再試一次';
+    boxEl.appendChild(div);
     boxEl.classList.add('show');
   }
 
@@ -586,17 +623,56 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
+  // Roads a scooter/motorcycle in Taiwan is legally barred from (national
+  // freeways, most expressways). Matched against step name + ref text.
+  const MOTORWAY_PATTERN = /國道|高速公路|快速道路|(?:^|[^省])台\d+線快速|國\d+甲?線/;
+
+  function stepIsMotorway(step) {
+    const text = (step.name || '') + ' ' + (step.ref || '');
+    return MOTORWAY_PATTERN.test(text);
+  }
+
+  function routeUsesMotorway(route) {
+    return route.legs.some(leg => leg.steps.some(stepIsMotorway));
+  }
+
   // ---- OSRM route fetching with alternatives ----
+  // Fetch from both the 'driving' and 'bike' profiles on the public demo
+  // server: neither is a perfect scooter/motorcycle model, but combining
+  // them gives more candidates that avoid freeways, which 'driving' alone
+  // often prefers. Motorway-containing routes are filtered out afterward.
   async function fetchRoutes(start, dest) {
-    const url = `${OSRM}/route/v1/driving/${start.lon},${start.lat};${dest.lon},${dest.lat}` +
-      `?alternatives=true&steps=true&geometries=geojson&overview=full&annotations=true`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('路線服務暫時無法使用');
-    const data = await res.json();
-    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+    const coordsPath = `${start.lon},${start.lat};${dest.lon},${dest.lat}`;
+    const commonParams = `?alternatives=true&steps=true&geometries=geojson&overview=full&annotations=true`;
+
+    const profiles = ['driving', 'bike'];
+    const results = await Promise.allSettled(
+      profiles.map(p => fetch(`${OSRM}/route/v1/${p}/${coordsPath}${commonParams}`).then(r => {
+        if (!r.ok) throw new Error('路線服務暫時無法使用');
+        return r.json();
+      }))
+    );
+
+    let allRoutes = [];
+    let anyOk = false;
+    results.forEach((res) => {
+      if (res.status === 'fulfilled' && res.value.code === 'Ok' && res.value.routes) {
+        anyOk = true;
+        allRoutes = allRoutes.concat(res.value.routes);
+      }
+    });
+
+    if (!anyOk || allRoutes.length === 0) {
       throw new Error('找不到路線，請確認地址是否正確');
     }
-    return data.routes;
+
+    // Prefer routes that don't touch a freeway/expressway (motorcycles can't
+    // legally use them). Only fall back to freeway-containing routes if
+    // literally every candidate requires one (e.g. crossing a strait/river
+    // with no other crossing).
+    const nonMotorway = allRoutes.filter(r => !routeUsesMotorway(r));
+    if (nonMotorway.length > 0) return { routes: nonMotorway, hadMotorwayOnly: false };
+    return { routes: allRoutes, hadMotorwayOnly: true };
   }
 
   // Try to fetch a route that approaches the destination from the opposite
@@ -718,7 +794,7 @@
     const wantRight = chkRightSide.checked;
     const anySelected = wantMain || wantFewTurns || wantRight;
 
-    const baseRoutes = await fetchRoutes(start, dest);
+    const { routes: baseRoutes, hadMotorwayOnly } = await fetchRoutes(start, dest);
     let candidateRoutes = baseRoutes.map(r => ({ route: r, isDetour: false }));
 
     // If "destination on the right" is requested and none of the direct
@@ -726,7 +802,8 @@
     if (wantRight) {
       const anyRightAlready = baseRoutes.some(r => destinationSide(r) === 'right');
       if (!anyRightAlready) {
-        const detourRoutes = await fetchOpposingSideRoute(start, dest);
+        const detourRoutes = (await fetchOpposingSideRoute(start, dest))
+          .filter(r => hadMotorwayOnly || !routeUsesMotorway(r));
         candidateRoutes = candidateRoutes.concat(detourRoutes.map(r => ({ route: r, isDetour: true })));
       }
     }
@@ -743,6 +820,7 @@
       // shortest distance wins (detours never considered here)
       const direct = scored.filter(s => !s.isDetour);
       direct.sort((a, b) => a.route.distance - b.route.distance);
+      direct[0].hadMotorwayOnly = hadMotorwayOnly;
       return direct[0];
     }
 
@@ -776,6 +854,7 @@
     });
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
+    scored[0].hadMotorwayOnly = hadMotorwayOnly;
     return scored[0];
   }
 
@@ -805,6 +884,15 @@
 
   function renderRoute(scored) {
     const route = scored.route;
+
+    const warningDiv = document.getElementById('motorwayWarning');
+    if (scored.hadMotorwayOnly) {
+      warningDiv.textContent = '🚫 這段路線唯一的走法會經過國道／快速道路，機車不能上去，請改走一般道路或詢問其他替代路線';
+      warningDiv.style.display = 'block';
+    } else {
+      warningDiv.style.display = 'none';
+    }
+
     document.getElementById('statDist').textContent =
       route.distance >= 1000 ? (route.distance / 1000).toFixed(1) + ' 公里' : Math.round(route.distance) + ' 公尺';
     document.getElementById('statTime').textContent = Math.round(route.duration / 60) + ' 分鐘';
