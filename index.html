@@ -12,7 +12,7 @@
     --accent-dark: #e0680f;
     --bg: #fdfaf5;
     --card: #ffffff;
-    --text: #000000;
+    --text: #2b2620;
     --text-soft: #6b6459;
     --border: #ece5d8;
     --good: #2e8b57;
@@ -92,6 +92,12 @@
     border: 2px solid var(--border);
     background: #fffdf9;
     cursor: pointer;
+  }
+  .input-hint {
+    font-size: 13px;
+    color: var(--text-soft);
+    margin: 6px 2px 0;
+    line-height: 1.5;
   }
   .suggestions {
     margin-top: 6px;
@@ -316,6 +322,7 @@
       <button class="locate-btn" id="myLocBtn" title="使用目前位置作為起點">📍</button>
     </div>
     <div class="suggestions" id="startSuggestions"></div>
+    <p class="input-hint">💡 建議先打「城市＋路名」，不用加郵遞區號或門牌號碼（例如「新竹市學府路」），查到後再從清單裡選最接近的位置</p>
   </div>
 
   <div class="panel">
@@ -324,6 +331,7 @@
       <input type="text" id="destInput" placeholder="輸入地址或地點名稱" autocomplete="off">
     </div>
     <div class="suggestions" id="suggestions"></div>
+    <p class="input-hint">💡 建議先打「城市＋路名」，不用加郵遞區號或門牌號碼（例如「新竹市學府路」），也可以直接打地標名稱（例如「新竹轉運站」），查到後再從清單裡選最接近的位置</p>
   </div>
 
   <div class="panel">
@@ -362,7 +370,6 @@
   <div id="map"></div>
 
   <div class="panel result-panel" id="resultPanel">
-    <div id="motorwayWarning" style="display:none; background:#fdeceb; color:var(--danger); border-radius:12px; padding:12px 14px; font-size:14px; font-weight:600; margin-bottom:14px; line-height:1.5;"></div>
     <div class="result-summary">
       <div class="stat">
         <b id="statDist">–</b>
@@ -513,6 +520,15 @@
     return q.replace(/^\s*\d{3,6}\s*[-,、]?\s*/, '').trim();
   }
 
+  // Nominatim's Taiwan housenumber coverage is patchy: many streets are
+  // known but a specific street number often isn't in its database, which
+  // makes the WHOLE query fail rather than degrading gracefully. Strip a
+  // trailing "36號" / "36-2號" style housenumber so we can at least locate
+  // the street itself.
+  function stripTrailingHouseNumber(q) {
+    return q.replace(/\d+(?:-\d+)?\s*號\s*$/, '').trim();
+  }
+
   async function queryNominatim(q) {
     const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=tw&q=${encodeURIComponent(q)}`;
     const res = await fetch(url, { headers: { 'Accept-Language': 'zh-TW' } });
@@ -523,30 +539,52 @@
   async function doSearch(q, boxEl, onSelect) {
     try {
       let data = await queryNominatim(q);
-      // if the raw query returns nothing, retry with a cleaned-up version
-      // (strip glued-on postal code) before giving up
-      if ((!data || data.length === 0)) {
+      let usedStreetOnly = false;
+
+      // retry 1: strip a glued-on leading postal code
+      if (!data || data.length === 0) {
         const cleaned = stripLeadingPostalCode(q);
         if (cleaned && cleaned !== q) {
           data = await queryNominatim(cleaned);
         }
       }
-      renderSuggestions(data, boxEl, onSelect, q);
+
+      // retry 2: Nominatim's TW housenumber coverage is incomplete — drop
+      // the trailing housenumber and search for the street itself instead
+      // of leaving the user with nothing
+      if (!data || data.length === 0) {
+        const streetOnly = stripTrailingHouseNumber(stripLeadingPostalCode(q));
+        if (streetOnly && streetOnly !== q) {
+          data = await queryNominatim(streetOnly);
+          if (data && data.length > 0) usedStreetOnly = true;
+        }
+      }
+
+      renderSuggestions(data, boxEl, onSelect, usedStreetOnly);
     } catch (e) {
       renderSuggestionsError(boxEl);
     }
   }
 
-  function renderSuggestions(items, boxEl, onSelect, originalQuery) {
+  function renderSuggestions(items, boxEl, onSelect, usedStreetOnly) {
     boxEl.innerHTML = '';
     if (!items || items.length === 0) {
       const div = document.createElement('div');
       div.className = 'suggestion-item';
       div.style.color = '#a89e8c';
-      div.textContent = '找不到符合的地址，請確認地址是否打對，或試試看只打路名+門牌號';
+      div.textContent = '找不到符合的地址，請確認地址是否打對，或試試看只打路名（不含門牌號）';
       boxEl.appendChild(div);
       boxEl.classList.add('show');
       return;
+    }
+    if (usedStreetOnly) {
+      const notice = document.createElement('div');
+      notice.className = 'suggestion-item';
+      notice.style.color = '#a89e8c';
+      notice.style.fontSize = '13px';
+      notice.style.cursor = 'default';
+      notice.textContent = 'ℹ️ 查不到完整門牌，以下是該路的大概位置，實際門牌請抵達後留意';
+      boxEl.appendChild(notice);
     }
     items.forEach((item) => {
       const div = document.createElement('div');
@@ -595,7 +633,8 @@
       resetPanelWrap.classList.add('show');
     } catch (e) {
       console.error(e);
-      showStatus('路線規劃失敗：' + (e.message || '請確認網路連線後再試一次'));
+      const prefix = e.isMotorwayOnly ? '🚫 無法規劃機車路線：' : '路線規劃失敗：';
+      showStatus(prefix + (e.message || '請確認網路連線後再試一次'));
       goBtn.disabled = false;
       return;
     }
@@ -624,12 +663,23 @@
   });
 
   // Roads a scooter/motorcycle in Taiwan is legally barred from (national
-  // freeways, most expressways). Matched against step name + ref text.
-  const MOTORWAY_PATTERN = /國道|高速公路|快速道路|(?:^|[^省])台\d+線快速|國\d+甲?線/;
+  // freeways, most expressways, and the elevated/viaduct roads that are
+  // functionally the same — "XX高架橋"/"XX高架道路"/"OO高架" naming is very
+  // common for these and carries no "國道"/"快速道路" wording at all).
+  // Name-keyword matching can never be 100% — Taiwan road naming isn't
+  // standardized — so this is backed up by a speed-based heuristic below.
+  const MOTORWAY_PATTERN = /國道|高速公路|快速道路|高架橋|高架道路|高架路|(?:^|[^省])台\d+線快速|國\d+甲?線|(?:^|[^一-鿿])[一-鿿]{1,4}高架(?:$|[^橋道路])/;
 
   function stepIsMotorway(step) {
     const text = (step.name || '') + ' ' + (step.ref || '');
-    return MOTORWAY_PATTERN.test(text);
+    if (MOTORWAY_PATTERN.test(text)) return true;
+    // Speed heuristic: sustained >70km/h implies a controlled-access road
+    // ordinary city/county roads don't reach, even when the name gives no hint.
+    if (step.distance > 300 && step.duration > 0) {
+      const kmh = (step.distance / step.duration) * 3.6;
+      if (kmh > 70) return true;
+    }
+    return false;
   }
 
   function routeUsesMotorway(route) {
@@ -795,15 +845,32 @@
     const anySelected = wantMain || wantFewTurns || wantRight;
 
     const { routes: baseRoutes, hadMotorwayOnly } = await fetchRoutes(start, dest);
+
+    // A route that requires a freeway/expressway is not a route a scooter
+    // can legally take at all — never show it as "the answer" with a
+    // warning attached. Refuse outright and let the user decide what to do.
+    if (hadMotorwayOnly) {
+      const err = new Error(
+        '這兩點之間，地圖服務找到的路都需要經過國道或快速道路，機車無法合法通行。' +
+        '可能是這兩個地點之間本來就沒有平面道路可以直接到達（例如需要跨橋、跨河、跨海），' +
+        '也可能是地圖資料判斷有誤。建議：改用附近的地標或路口當目的地再試一次，' +
+        '或直接使用其他導航方式確認實際路況。'
+      );
+      err.isMotorwayOnly = true;
+      throw err;
+    }
+
     let candidateRoutes = baseRoutes.map(r => ({ route: r, isDetour: false }));
 
     // If "destination on the right" is requested and none of the direct
     // candidates achieve it, try forcing an approach from the opposite side.
+    // (hadMotorwayOnly is always false here — the check above already threw
+    // if every base candidate required a freeway.)
     if (wantRight) {
       const anyRightAlready = baseRoutes.some(r => destinationSide(r) === 'right');
       if (!anyRightAlready) {
         const detourRoutes = (await fetchOpposingSideRoute(start, dest))
-          .filter(r => hadMotorwayOnly || !routeUsesMotorway(r));
+          .filter(r => !routeUsesMotorway(r));
         candidateRoutes = candidateRoutes.concat(detourRoutes.map(r => ({ route: r, isDetour: true })));
       }
     }
@@ -820,7 +887,6 @@
       // shortest distance wins (detours never considered here)
       const direct = scored.filter(s => !s.isDetour);
       direct.sort((a, b) => a.route.distance - b.route.distance);
-      direct[0].hadMotorwayOnly = hadMotorwayOnly;
       return direct[0];
     }
 
@@ -854,7 +920,6 @@
     });
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
-    scored[0].hadMotorwayOnly = hadMotorwayOnly;
     return scored[0];
   }
 
@@ -884,14 +949,9 @@
 
   function renderRoute(scored) {
     const route = scored.route;
-
-    const warningDiv = document.getElementById('motorwayWarning');
-    if (scored.hadMotorwayOnly) {
-      warningDiv.textContent = '🚫 這段路線唯一的走法會經過國道／快速道路，機車不能上去，請改走一般道路或詢問其他替代路線';
-      warningDiv.style.display = 'block';
-    } else {
-      warningDiv.style.display = 'none';
-    }
+    // Note: a route that requires a freeway/expressway never reaches this
+    // function — findBestRoute() throws before returning one. See the
+    // isMotorwayOnly handling in the goBtn click handler.
 
     document.getElementById('statDist').textContent =
       route.distance >= 1000 ? (route.distance / 1000).toFixed(1) + ' 公里' : Math.round(route.distance) + ' 公尺';
